@@ -325,6 +325,7 @@ stage_2() {
   [[ -n "$SUBNET_ID" && "$SUBNET_ID" != "None" ]] || \
     die "No default subnet exists in the default VPC."
 
+  # This command resolves the current Ubuntu 24.04 AMI ID that will provide the instance’s operating system.
   AMI_ID=$(aws ssm get-parameter \
     --region "$AWS_REGION" \
     --name "$AMI_PARAMETER" \
@@ -374,6 +375,7 @@ stage_2() {
   trap cleanup_failed_stage_2 EXIT INT TERM
 
   umask 077
+  # This command creates a temporary EC2 key pair and saves its private key locally for SSH authentication.
   aws ec2 create-key-pair \
     --region "$AWS_REGION" \
     --key-name "$KEY_NAME" \
@@ -395,6 +397,7 @@ stage_2() {
     --query 'GroupId' \
     --output text)
 
+  # This command opens port 22 only to my current public IP while leaving Ollama port 11434 closed.
   aws ec2 authorize-security-group-ingress \
     --region "$AWS_REGION" \
     --group-id "$SG_ID" \
@@ -403,6 +406,7 @@ stage_2() {
     --cidr "$my_ip/32" \
     --no-cli-pager >/dev/null
 
+# This command launches one tagged c7i.2xlarge instance with Ubuntu, the SSH key, the restricted security group, and a 40 GB gp3 root disk.
   INSTANCE_ID=$(aws ec2 run-instances \
     --region "$AWS_REGION" \
     --image-id "$AMI_ID" \
@@ -454,6 +458,7 @@ stage_3() {
   load_state
   wait_for_ssh
 
+# This command connects to the EC2 instance through SSH and installs Ollama on the remote machine.
   ssh "${SSH_OPTIONS[@]}" "$SSH_USER@$PUBLIC_IP" 'bash -s' <<'REMOTE_INSTALL'
 set -Eeuo pipefail
 curl -fsSL https://ollama.com/install.sh | sh
@@ -484,6 +489,7 @@ for attempt in {1..30}; do
   sleep 2
 done
 
+# The installer already started Ollama on port 11434, and this command downloads qwen2.5:0.5b so the service can answer requests.
 ollama pull "$MODEL"
 REMOTE_MODEL
 
@@ -498,6 +504,8 @@ stage_5() {
   build_ssh_options
 
   echo "Open a SECOND terminal and leave this command running:"
+
+  # This command displays a tunnel that forwards localhost:11434 on my computer to localhost:11434 on the EC2 instance where Ollama is listening.
   printf 'ssh -i %q -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=%q -N -L %q %q\n' \
     "$KEY_FILE" \
     "$KNOWN_HOSTS_FILE" \
@@ -516,6 +524,7 @@ stage_6() {
 
   local response reply
 
+# This command sends “I am John” through the private tunnel with a 20-token limit and a deterministic temperature of zero.
   response=$(curl --fail --silent --show-error \
     "http://127.0.0.1:${LOCAL_PORT}/v1/chat/completions" \
     -H 'Content-Type: application/json' \
@@ -559,6 +568,7 @@ stage_7() {
   load_state
 
   local instance_state
+  # This command stops the instance to end compute charges while its EBS root volume remains allocated and billable.
   instance_state=$(aws ec2 describe-instances \
     --region "$AWS_REGION" \
     --instance-ids "$INSTANCE_ID" \
@@ -584,6 +594,7 @@ stage_8() {
   require_commands aws
   load_state
 
+# This command terminates the instance and releases its root volume because DeleteOnTermination was enabled during launch.
   local instance_state attempt volume_id
   instance_state=$(aws ec2 describe-instances \
     --region "$AWS_REGION" \
